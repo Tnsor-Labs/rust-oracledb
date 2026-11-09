@@ -137,3 +137,40 @@ fn test_3401() {
     ));
     fs::remove_dir_all(invalid_entry_dir).unwrap();
 }
+
+#[test]
+/// Tests aliases that directly follow comment lines.
+fn test_3402() {
+    let dir = make_config_dir();
+    let first_descriptor = "(DESCRIPTION=(ADDRESS=(PROTOCOL=tcp)\
+        (HOST=host_3402)(PORT=1521))\
+        (CONNECT_DATA=(SERVICE_NAME=first_3402)))";
+    let second_descriptor = "(DESCRIPTION=(ADDRESS=(PROTOCOL=tcp)\
+        (HOST=host_3402)(PORT=1521))\
+        (CONNECT_DATA=(SERVICE_NAME=second_3402)))";
+    fs::write(
+        dir.join("tnsnames.ora"),
+        "# first alias\n\
+         FIRST =\n  (DESCRIPTION =\n    \
+         (ADDRESS = (PROTOCOL = TCP)(HOST = host_3402)(PORT = 1521))\n    \
+         (CONNECT_DATA = (SERVICE_NAME = first_3402)))\n\
+         # second alias\n\
+         # with two comment lines\n\
+         SECOND = host_3402/second_3402\n",
+    )
+    .unwrap();
+
+    let dir_str = dir.to_str().unwrap();
+    let first = oracledb::Config::default()
+        .set_config_dir(dir_str)
+        .set_connect_string("first")
+        .unwrap();
+    assert_eq!(first.get_connect_descriptor(), first_descriptor);
+    let second = oracledb::Config::default()
+        .set_config_dir(dir_str)
+        .set_connect_string("second")
+        .unwrap();
+    assert_eq!(second.get_connect_descriptor(), second_descriptor);
+
+    fs::remove_dir_all(dir).unwrap();
+}
