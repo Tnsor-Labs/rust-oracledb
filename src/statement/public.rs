@@ -27,6 +27,8 @@
 //
 // Defines the structure representing a statement and various options used
 // publicly.
+//
+// Modified by Tnsor Labs, 2026-11-10: fetch_into(), for Cursor::fetch_into().
 //-----------------------------------------------------------------------------
 
 use std::fmt;

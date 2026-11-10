@@ -26,6 +26,11 @@
 // tnsnames_file_parser.rs
 //
 // Defines the structure used for parsing a tnsnames.ora file.
+//
+// Modified by Tnsor Labs, 2026-11-10: skip_whitespace_and_comments() no
+// longer drops the first character of the line after a comment, so an alias
+// written after a comment line is found
+// (https://github.com/oracle/rust-oracledb/issues/83).
 //-----------------------------------------------------------------------------
 
 use super::connect_options::DescriptionList;

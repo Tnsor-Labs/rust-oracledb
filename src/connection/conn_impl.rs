@@ -28,6 +28,8 @@
 // Defines the structure that implements connections. This is independent of
 // the connection structure in order to allow for connections that are closed
 // and for pooling connections.
+//
+// Modified by Tnsor Labs, 2026-11-10: test_set_end_of_response(), for tests.
 //-----------------------------------------------------------------------------
 
 use std::sync::Arc;

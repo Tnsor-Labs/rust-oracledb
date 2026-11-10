@@ -26,6 +26,9 @@
 // lib.rs
 //
 // Main library of oracledb crate.
+//
+// Modified by Tnsor Labs, 2026-11-10: exports RowSink, WireValue, and
+// row_sink_supports.
 //-----------------------------------------------------------------------------
 
 #![crate_type = "lib"]

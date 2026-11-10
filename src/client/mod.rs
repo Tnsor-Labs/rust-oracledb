@@ -27,6 +27,10 @@
 //
 // Defines the structures used for handling the requests to and the responses
 // from the server.
+//
+// Modified by Tnsor Labs, 2026-11-10: fetch_into() fetches rows into a row
+// sink, and a response read again from its start lets the message discard what
+// it had deserialized (restart_deserialize).
 //-----------------------------------------------------------------------------
 
 mod capabilities;

@@ -27,6 +27,9 @@
 //
 // Defines the structures used for handling the response to a request sent by
 // the client to the server.
+//
+// Modified by Tnsor Labs, 2026-11-10: deserialize_row_into() deserializes a
+// row into a row sink.
 //-----------------------------------------------------------------------------
 
 mod error_info;
