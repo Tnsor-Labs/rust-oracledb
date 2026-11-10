@@ -14,7 +14,11 @@
 >   New in `src/row_sink.rs` and `tests/test_3900_row_sink.rs`; the fetch
 >   path in `src/cursor.rs`, `src/client/mod.rs`, `src/messages/fetch.rs`,
 >   `src/messages/mod.rs`, `src/response/mod.rs`, `src/statement/public.rs`,
->   and `src/lib.rs`; and a test-only setting in `src/connection/`.
+>   `src/read_buffer.rs`, and `src/lib.rs`; and a test-only setting in
+>   `src/connection/`.
+> - JSON visitors: the OSON decoder in `src/json.rs` passes each node to a
+>   `JsonVisitor`, so a consumer such as one writing JSON text needs no
+>   `JsonValue`.
 >
 > Use the Oracle release otherwise. Report problems with these changes to
 > [Tnsor-Labs/orkidea-adbc](https://github.com/Tnsor-Labs/orkidea-adbc).
