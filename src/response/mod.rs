@@ -45,6 +45,8 @@ use crate::read_buffer::FromBuf;
 use crate::read_buffer::FromBufFallible;
 use crate::read_buffer::ReadBuffer;
 use crate::row::DbRow;
+use crate::row_sink::RowSink;
+use crate::row_sink::WireValue;
 use crate::rowid::Rowid;
 use crate::rowid::convert_logical_rowid;
 use crate::statement::CachedStatement;
@@ -67,6 +69,7 @@ pub(crate) struct Response {
     call_status: u32,
     end_of_fetch: bool,
     flush_out_binds: bool,
+    sink_rows: usize,
 }
 
 impl Response {
@@ -118,6 +121,7 @@ impl Response {
         self.bit_vector = None;
         self.end_of_fetch = false;
         self.flush_out_binds = false;
+        self.sink_rows = 0;
     }
 
     /// Records one pending value position while deserializing rows.
@@ -204,6 +208,115 @@ impl Response {
         }
         self.bit_vector = Some(self.buf.read_bytes(num_bytes)?.into());
         Ok(())
+    }
+
+    /// Deserializes a TTC row data message into a sink, value by value,
+    /// without building a row. Only columns [`crate::row_sink::supports`]
+    /// accepts may be fetched this way.
+    pub(crate) fn deserialize_row_into(
+        &mut self,
+        statement: &CachedStatement,
+        sink: &mut dyn RowSink,
+    ) -> Result<(), Error> {
+        for (i, metadata) in statement.out_metadata().iter().enumerate() {
+            if metadata.is_null_by_describe() {
+                sink.append(i, WireValue::Null)?;
+                continue;
+            }
+            if self.is_duplicate_data(i) {
+                sink.repeat(i)?;
+                continue;
+            }
+            let db_type = metadata.db_type();
+            let num = db_type.ora_type_num;
+            // ROWIDs are not one length-prefixed value: they are decoded as
+            // for rows, and passed as their text.
+            if num == constants::ORA_TYPE_NUM_ROWID {
+                match self.read_short_length()? {
+                    0 => sink.append(i, WireValue::Null)?,
+                    _ => {
+                        let rowid = Rowid::deserialize(self)?.to_string();
+                        sink.append(i, WireValue::Rowid(&rowid))?;
+                    }
+                }
+                continue;
+            }
+            if num == constants::ORA_TYPE_NUM_UROWID {
+                match self.deserialize_urowid()? {
+                    None => sink.append(i, WireValue::Null)?,
+                    Some(rowid) => sink.append(i, WireValue::Rowid(&rowid))?,
+                }
+                continue;
+            }
+            let value = self.read_bytes_with_length()?;
+            let value = if value.is_empty() {
+                WireValue::Null
+            } else {
+                match num {
+                    constants::ORA_TYPE_NUM_BINARY_DOUBLE => {
+                        WireValue::BinaryDouble(f64::from_buf(&value))
+                    }
+                    constants::ORA_TYPE_NUM_BINARY_FLOAT => {
+                        WireValue::BinaryFloat(f32::from_buf(&value))
+                    }
+                    constants::ORA_TYPE_NUM_BOOLEAN => {
+                        WireValue::Boolean(bool::from_buf(&value))
+                    }
+                    constants::ORA_TYPE_NUM_DATE
+                    | constants::ORA_TYPE_NUM_TIMESTAMP
+                    | constants::ORA_TYPE_NUM_TIMESTAMP_LTZ
+                    | constants::ORA_TYPE_NUM_TIMESTAMP_TZ => {
+                        WireValue::Timestamp(&value)
+                    }
+                    constants::ORA_TYPE_NUM_BINARY_INTEGER
+                    | constants::ORA_TYPE_NUM_NUMBER => {
+                        WireValue::Number(&value)
+                    }
+                    constants::ORA_TYPE_NUM_CHAR
+                    | constants::ORA_TYPE_NUM_LONG
+                    | constants::ORA_TYPE_NUM_VARCHAR => {
+                        if db_type.csfrm == constants::CS_FORM_NCHAR {
+                            WireValue::NationalText(&value)
+                        } else {
+                            WireValue::Text(&value)
+                        }
+                    }
+                    constants::ORA_TYPE_NUM_RAW
+                    | constants::ORA_TYPE_NUM_LONG_RAW => {
+                        WireValue::Raw(&value)
+                    }
+                    constants::ORA_TYPE_NUM_INTERVAL_DS => {
+                        WireValue::IntervalDS(&value)
+                    }
+                    constants::ORA_TYPE_NUM_INTERVAL_YM => {
+                        WireValue::IntervalYM(&value)
+                    }
+                    _ => {
+                        return Err(Error::not_implemented(format!(
+                            "fetching {} into a row sink",
+                            db_type.ora_name
+                        )));
+                    }
+                }
+            };
+            sink.append(i, value)?;
+            // A LONG or LONG RAW value in a fetch is followed by its null
+            // indicator and return code.
+            if num == constants::ORA_TYPE_NUM_LONG
+                || num == constants::ORA_TYPE_NUM_LONG_RAW
+            {
+                let _null_indicator = self.read_sb4()?;
+                let _return_code = self.read_ub4()?;
+            }
+        }
+        sink.end_row()?;
+        self.sink_rows += 1;
+        Ok(())
+    }
+
+    /// Returns the rows deserialized into a sink.
+    pub(crate) fn sink_rows(&self) -> usize {
+        self.sink_rows
     }
 
     pub(crate) fn deserialize_row_data(
@@ -451,6 +564,7 @@ impl Response {
             call_status: 0,
             end_of_fetch: false,
             flush_out_binds: false,
+            sink_rows: 0,
         }
     }
 

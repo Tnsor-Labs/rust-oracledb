@@ -255,6 +255,12 @@ pub(crate) trait Message {
     fn pre_deserialize(&mut self, _client: &mut Client, _resp: &mut Response) {
     }
 
+    /// Called when the response must be deserialized again from its start,
+    /// because more of it has arrived.
+    fn restart_deserialize(&mut self, _resp: &Response) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Returns whether or not a message needs to be sent a second time.
     fn resend_needed(&self) -> bool {
         false
