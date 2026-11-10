@@ -85,6 +85,14 @@ impl ConnImpl {
         self.client_ref.lock()?.close()
     }
 
+    /// See `Connection::test_set_end_of_response`.
+    pub(crate) fn test_set_end_of_response(
+        &self,
+        value: bool,
+    ) -> Result<bool, Error> {
+        Ok(self.client_ref.lock()?.test_set_end_of_response(value))
+    }
+
     /// Establishes a connection to the database and returns it.
     pub(crate) fn connect(
         config: Config,
