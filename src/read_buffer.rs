@@ -26,6 +26,9 @@
 // read_buffer.rs
 //
 // Defines the structures used for deserializing data found in buffers.
+//
+// Modified by Tnsor Labs, 2026-11-11: read_value_lob_bytes() reads a
+// value-based LOB without decoding it, and utf8_at() reads text in place.
 //-----------------------------------------------------------------------------
 
 use std::borrow::Cow;
@@ -239,6 +242,20 @@ impl ReadBuffer {
 
     /// Reads the specified number of bytes from the buffer which are assumed
     /// to be valid UTF-8 encoded bytes, and returns a string reference.
+    /// Returns the UTF-8 text at `pos` (as get_pos() gave it) of `num_bytes`
+    /// bytes, without moving the read position.
+    pub(crate) fn utf8_at(
+        &self,
+        pos: usize,
+        num_bytes: usize,
+    ) -> Result<&str, Error> {
+        let bytes = pos
+            .checked_add(num_bytes)
+            .and_then(|end| self.buf.get(pos..end))
+            .ok_or_else(Error::out_of_data)?;
+        Ok(std::str::from_utf8(bytes)?)
+    }
+
     pub(crate) fn read_utf8(
         &mut self,
         num_bytes: usize,

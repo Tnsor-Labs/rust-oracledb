@@ -26,6 +26,10 @@
 // json.rs
 //
 // Defines the structures and enumerations for Oracle JSON values.
+//
+// Modified by Tnsor Labs, 2026-11-11: the OSON decoder passes each node to a
+// JsonVisitor (visit_oson, JsonScalar) instead of building a JsonValue, which
+// one visitor builds; field names are borrowed from the encoded bytes.
 //-----------------------------------------------------------------------------
 
 use std::collections::HashMap;
@@ -110,11 +114,130 @@ pub enum JsonValue {
     Vector(Vector),
 }
 
+/// A scalar value of a JSON document, as decoding OSON visits it. Strings
+/// and binary values are borrowed from the encoded bytes.
+#[derive(Debug)]
+pub enum JsonScalar<'a> {
+    BinaryDouble(f64),
+    BinaryFloat(f32),
+    Boolean(bool),
+    IntervalDS(OracleIntervalDS),
+    IntervalYM(OracleIntervalYM),
+    Null,
+    Number(OracleNumber),
+    Raw(&'a [u8]),
+    String(&'a str),
+    Timestamp(OracleTimestamp),
+    Vector(Vector),
+}
+
+/// Receives a JSON document node by node as it is decoded from OSON, for
+/// consumers that do not need a [`JsonValue`], such as one writing JSON text.
+/// Object fields come in the order the document stores them, each name
+/// before its value.
+pub trait JsonVisitor {
+    fn begin_object(&mut self, fields: usize) -> Result<(), Error>;
+    fn field_name(&mut self, name: &str) -> Result<(), Error>;
+    fn end_object(&mut self) -> Result<(), Error>;
+    fn begin_array(&mut self, items: usize) -> Result<(), Error>;
+    fn end_array(&mut self) -> Result<(), Error>;
+    fn scalar(&mut self, value: JsonScalar<'_>) -> Result<(), Error>;
+}
+
+/// Decodes OSON-encoded bytes, passing each node to the visitor.
+pub fn visit_oson<V: JsonVisitor + ?Sized>(
+    bytes: &[u8],
+    visitor: &mut V,
+) -> Result<(), Error> {
+    OsonDecoder::new().decode(&mut ReadBuffer::from_bytes(bytes), visitor)
+}
+
+/// Builds a [`JsonValue`] from the nodes an OSON decoder visits.
+#[derive(Default)]
+struct JsonValueBuilder {
+    containers: Vec<(JsonValue, Option<String>)>,
+    root: Option<JsonValue>,
+}
+
+impl JsonValueBuilder {
+    fn add(&mut self, value: JsonValue) -> Result<(), Error> {
+        match self.containers.last_mut() {
+            None => self.root = Some(value),
+            Some((JsonValue::JsonArray(items), _)) => items.push(value),
+            Some((JsonValue::JsonObject(map), name)) => {
+                let name = name
+                    .take()
+                    .ok_or_else(Error::invalid_oson_encoded_bytes)?;
+                map.insert(name, value);
+            }
+            Some(_) => return Err(Error::invalid_oson_encoded_bytes()),
+        }
+        Ok(())
+    }
+
+    fn end(&mut self) -> Result<(), Error> {
+        let (value, _) = self
+            .containers
+            .pop()
+            .ok_or_else(Error::invalid_oson_encoded_bytes)?;
+        self.add(value)
+    }
+}
+
+impl JsonVisitor for JsonValueBuilder {
+    fn begin_object(&mut self, fields: usize) -> Result<(), Error> {
+        let map = HashMap::with_capacity(fields);
+        self.containers.push((JsonValue::JsonObject(map), None));
+        Ok(())
+    }
+
+    fn field_name(&mut self, name: &str) -> Result<(), Error> {
+        match self.containers.last_mut() {
+            Some((JsonValue::JsonObject(_), pending)) => {
+                *pending = Some(name.to_string());
+                Ok(())
+            }
+            _ => Err(Error::invalid_oson_encoded_bytes()),
+        }
+    }
+
+    fn end_object(&mut self) -> Result<(), Error> {
+        self.end()
+    }
+
+    fn begin_array(&mut self, items: usize) -> Result<(), Error> {
+        let items = Vec::with_capacity(items);
+        self.containers.push((JsonValue::JsonArray(items), None));
+        Ok(())
+    }
+
+    fn end_array(&mut self) -> Result<(), Error> {
+        self.end()
+    }
+
+    fn scalar(&mut self, value: JsonScalar<'_>) -> Result<(), Error> {
+        self.add(match value {
+            JsonScalar::BinaryDouble(v) => JsonValue::BinaryDouble(v),
+            JsonScalar::BinaryFloat(v) => JsonValue::BinaryFloat(v),
+            JsonScalar::Boolean(v) => JsonValue::Boolean(v),
+            JsonScalar::IntervalDS(v) => JsonValue::IntervalDS(v),
+            JsonScalar::IntervalYM(v) => JsonValue::IntervalYM(v),
+            JsonScalar::Null => JsonValue::Null,
+            JsonScalar::Number(v) => JsonValue::Number(v),
+            JsonScalar::Raw(v) => JsonValue::Raw(v.to_vec()),
+            JsonScalar::String(v) => JsonValue::String(v.to_string()),
+            JsonScalar::Timestamp(v) => JsonValue::Timestamp(v),
+            JsonScalar::Vector(v) => JsonValue::Vector(v),
+        })
+    }
+}
+
 struct OsonDecoder {
     relative_offsets: bool,
     tree_seg_pos: usize,
     field_id_length: usize,
-    field_names: Vec<String>,
+    /// Where each field name's (validated) UTF-8 text is in the buffer.
+    field_names: Vec<(usize, usize)>,
 }
 
 struct OsonDecoderFieldNamesSeg {
@@ -201,7 +324,7 @@ impl OsonDecoderFieldNamesSeg {
     fn decode_names(
         &self,
         buf: &mut ReadBuffer,
-        names: &mut Vec<String>,
+        names: &mut Vec<(usize, usize)>,
     ) -> Result<(), Error> {
         // skip the hash id array
         let _ = buf.read_bytes(self.num_fields * self.lengths_size)?;
@@ -227,8 +350,9 @@ impl OsonDecoderFieldNamesSeg {
             } else {
                 buf.read_u16be()? as usize
             };
-            let name = buf.read_utf8(len)?;
-            names.push(name.to_string());
+            let pos = buf.get_pos();
+            buf.read_utf8(len)?;
+            names.push((pos, len));
         }
 
         buf.set_pos(base_data_pos + self.seg_size);
@@ -242,8 +366,12 @@ impl OsonDecoderFieldNamesSeg {
 }
 
 impl OsonDecoder {
-    /// Decodes the OSON encoded data and returns the root level node.
-    fn decode(&mut self, buf: &mut ReadBuffer) -> Result<JsonValue, Error> {
+    /// Decodes the OSON encoded data, passing each node to the visitor.
+    fn decode<V: JsonVisitor + ?Sized>(
+        &mut self,
+        buf: &mut ReadBuffer,
+        visitor: &mut V,
+    ) -> Result<(), Error> {
         // validate that the first three bytes are the expected "magic" bytes
         // that identify an OSON encoded image
         let magic_bytes = buf.read_bytes(3)?;
@@ -275,7 +403,7 @@ impl OsonDecoder {
             } else {
                 buf.read_u16be()?;
             }
-            return self.decode_node(buf);
+            return self.decode_node(buf, visitor);
         }
 
         // determine the number of short field names and the field id length
@@ -336,39 +464,39 @@ impl OsonDecoder {
         // save tree segment position
         self.tree_seg_pos = buf.get_pos();
 
-        // return root node
-        self.decode_node(buf)
+        // decode the root node
+        self.decode_node(buf, visitor)
     }
 
-    /// Decodes a container node (array or object) and returns it.
-    fn decode_array_node(
+    /// Decodes an array node.
+    fn decode_array_node<V: JsonVisitor + ?Sized>(
         &mut self,
         buf: &mut ReadBuffer,
         node_type: u8,
-    ) -> Result<JsonValue, Error> {
+        visitor: &mut V,
+    ) -> Result<(), Error> {
         let (_, num_children) = get_container_info(buf, node_type)?;
+        visitor.begin_array(num_children)?;
         let mut offsets_pos = buf.get_pos();
-        let mut array: Vec<JsonValue> = Vec::new();
         for _ in 0..num_children {
             buf.set_pos(offsets_pos);
             let offset = get_offset(buf, node_type)?;
             offsets_pos = buf.get_pos();
             buf.set_pos(self.tree_seg_pos + offset);
-            let value = self.decode_node(buf)?;
-            array.push(value);
+            self.decode_node(buf, visitor)?;
         }
-        Ok(JsonValue::JsonArray(array))
+        visitor.end_array()
     }
 
-    /// Decodes a container node (array or object) and returns it.
-    fn decode_object_node(
+    /// Decodes an object node.
+    fn decode_object_node<V: JsonVisitor + ?Sized>(
         &mut self,
         buf: &mut ReadBuffer,
         node_type: u8,
-    ) -> Result<JsonValue, Error> {
+        visitor: &mut V,
+    ) -> Result<(), Error> {
         let (is_shared, mut num_children) =
             get_container_info(buf, node_type)?;
-        let mut obj: HashMap<String, JsonValue> = HashMap::new();
         let mut offsets_pos = if is_shared {
             let offset = get_offset(buf, node_type)?;
             let offsets_pos = buf.get_pos();
@@ -381,6 +509,7 @@ impl OsonDecoder {
         } else {
             buf.get_pos() + num_children * self.field_id_length
         };
+        visitor.begin_object(num_children)?;
         let mut field_ids_pos = buf.get_pos();
         for _ in 0..num_children {
             buf.set_pos(field_ids_pos);
@@ -390,104 +519,108 @@ impl OsonDecoder {
                 _ => buf.read_u32be()? as usize,
             };
             field_ids_pos = buf.get_pos();
-            let name = self.field_names[field_id - 1].to_string();
+            let &(pos, len) = field_id
+                .checked_sub(1)
+                .and_then(|i| self.field_names.get(i))
+                .ok_or_else(Error::invalid_oson_encoded_bytes)?;
+            visitor.field_name(buf.utf8_at(pos, len)?)?;
             buf.set_pos(offsets_pos);
             let offset = get_offset(buf, node_type)?;
             offsets_pos = buf.get_pos();
             buf.set_pos(self.tree_seg_pos + offset);
-            let value = self.decode_node(buf)?;
-            obj.insert(name, value);
+            self.decode_node(buf, visitor)?;
         }
-        Ok(JsonValue::JsonObject(obj))
+        visitor.end_object()
     }
 
-    /// Decodes a single node and returns it.
-    fn decode_node(
+    /// Decodes a single node.
+    fn decode_node<V: JsonVisitor + ?Sized>(
         &mut self,
         buf: &mut ReadBuffer,
-    ) -> Result<JsonValue, Error> {
+        visitor: &mut V,
+    ) -> Result<(), Error> {
         let node_type = buf.read_u8()?;
         if node_type & 0x80 != 0 {
             if node_type & 0x40 == 0 {
-                return self.decode_object_node(buf, node_type);
+                return self.decode_object_node(buf, node_type, visitor);
             }
-            return self.decode_array_node(buf, node_type);
+            return self.decode_array_node(buf, node_type, visitor);
         }
-        match node_type {
-            OSON_TYPE_NULL => Ok(JsonValue::Null),
-            OSON_TYPE_TRUE => Ok(JsonValue::Boolean(true)),
-            OSON_TYPE_FALSE => Ok(JsonValue::Boolean(false)),
+        let value = match node_type {
+            OSON_TYPE_NULL => Ok(JsonScalar::Null),
+            OSON_TYPE_TRUE => Ok(JsonScalar::Boolean(true)),
+            OSON_TYPE_FALSE => Ok(JsonScalar::Boolean(false)),
             OSON_TYPE_DATE | OSON_TYPE_TIMESTAMP7 => {
                 let bytes = buf.read_bytes(constants::ORA_TYPE_SIZE_DATE)?;
                 let value = OracleTimestamp::from_buf(bytes);
-                Ok(JsonValue::Timestamp(value))
+                Ok(JsonScalar::Timestamp(value))
             }
             OSON_TYPE_TIMESTAMP => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_TIMESTAMP)?;
                 let value = OracleTimestamp::from_buf(bytes);
-                Ok(JsonValue::Timestamp(value))
+                Ok(JsonScalar::Timestamp(value))
             }
             OSON_TYPE_TIMESTAMP_TZ => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_TIMESTAMP_TZ)?;
                 let value = OracleTimestamp::from_buf(bytes);
-                Ok(JsonValue::Timestamp(value))
+                Ok(JsonScalar::Timestamp(value))
             }
             OSON_TYPE_BINARY_DOUBLE => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_BINARY_DOUBLE)?;
                 let value = f64::from_buf(bytes);
-                Ok(JsonValue::BinaryDouble(value))
+                Ok(JsonScalar::BinaryDouble(value))
             }
             OSON_TYPE_BINARY_FLOAT => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_BINARY_FLOAT)?;
                 let value = f32::from_buf(bytes);
-                Ok(JsonValue::BinaryFloat(value))
+                Ok(JsonScalar::BinaryFloat(value))
             }
             OSON_TYPE_INTERVAL_DS => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_INTERVAL_DS)?;
                 let value = OracleIntervalDS::from_buf(bytes);
-                Ok(JsonValue::IntervalDS(value))
+                Ok(JsonScalar::IntervalDS(value))
             }
             OSON_TYPE_INTERVAL_YM => {
                 let bytes =
                     buf.read_bytes(constants::ORA_TYPE_SIZE_INTERVAL_YM)?;
                 let value = OracleIntervalYM::from_buf(bytes);
-                Ok(JsonValue::IntervalYM(value))
+                Ok(JsonScalar::IntervalYM(value))
             }
             OSON_TYPE_BINARY_LENGTH_UINT16 => {
                 let len = buf.read_u16be()? as usize;
                 let bytes = buf.read_bytes(len)?;
-                Ok(JsonValue::Raw(bytes.to_vec()))
+                Ok(JsonScalar::Raw(bytes))
             }
             OSON_TYPE_BINARY_LENGTH_UINT32 => {
                 let len = buf.read_u32be()? as usize;
                 let bytes = buf.read_bytes(len)?;
-                Ok(JsonValue::Raw(bytes.to_vec()))
+                Ok(JsonScalar::Raw(bytes))
             }
             OSON_TYPE_NUMBER_LENGTH_UINT8 => {
                 let len = buf.read_u8()? as usize;
                 let bytes = buf.read_bytes(len)?;
                 let value = OracleNumber::from_buf(bytes);
-                Ok(JsonValue::Number(value))
+                Ok(JsonScalar::Number(value))
             }
             OSON_TYPE_STRING_LENGTH_UINT8 => {
                 let len = buf.read_u8()? as usize;
                 let value = buf.read_utf8(len)?;
-                Ok(JsonValue::String(value.to_string()))
+                Ok(JsonScalar::String(value))
             }
             OSON_TYPE_STRING_LENGTH_UINT16 => {
                 let len = buf.read_u16be()? as usize;
                 let value = buf.read_utf8(len)?;
-                Ok(JsonValue::String(value.to_string()))
+                Ok(JsonScalar::String(value))
             }
             OSON_TYPE_STRING_LENGTH_UINT32 => {
                 let len = buf.read_u32be()? as usize;
                 let value = buf.read_utf8(len)?;
-                Ok(JsonValue::String(value.to_string()))
+                Ok(JsonScalar::String(value))
             }
             OSON_TYPE_EXTENDED => {
                 let subtype = buf.read_u8()?;
@@ -497,30 +630,31 @@ impl OsonDecoder {
                         let raw = buf.read_bytes(len)?;
                         let mut sub = ReadBuffer::from_bytes(raw);
                         let vector = Vector::from_buf_fallible(&mut sub)?;
-                        Ok(JsonValue::Vector(vector))
+                        Ok(JsonScalar::Vector(vector))
                     }
                     _ => Err(Error::unsupported_oson_node_type(subtype)),
                 }
             }
-            0x00 => Ok(JsonValue::String(String::new())),
+            0x00 => Ok(JsonScalar::String("")),
             0x01..=0x1f => {
                 let value = buf.read_utf8(node_type.into())?;
-                Ok(JsonValue::String(value.to_string()))
+                Ok(JsonScalar::String(value))
             }
             0x20..=0x2f | 0x60..=0x6f => {
                 let num_bytes = ((node_type & 0x0f) + 1) as usize;
                 let bytes = buf.read_bytes(num_bytes)?;
                 let value = OracleNumber::from_buf(bytes);
-                Ok(JsonValue::Number(value))
+                Ok(JsonScalar::Number(value))
             }
             0x40..=0x5f => {
                 let num_bytes = (node_type & 0x0f) as usize;
                 let bytes = buf.read_bytes(num_bytes)?;
                 let value = OracleNumber::from_buf(bytes);
-                Ok(JsonValue::Number(value))
+                Ok(JsonScalar::Number(value))
             }
             _ => Err(Error::unsupported_oson_node_type(node_type)),
-        }
+        }?;
+        visitor.scalar(value)
     }
 
     /// Returns a new OsonDecoder instance.
@@ -941,7 +1075,9 @@ impl FromBufFallible for JsonValue {
     /// Decodes a JsonValue from a ReadBuffer instance containing OSON-encoded
     /// bytes.
     fn from_buf_fallible(buf: &mut ReadBuffer) -> Result<Self, Error> {
-        OsonDecoder::new().decode(buf)
+        let mut builder = JsonValueBuilder::default();
+        OsonDecoder::new().decode(buf, &mut builder)?;
+        builder.root.ok_or_else(Error::invalid_oson_encoded_bytes)
     }
 }
 

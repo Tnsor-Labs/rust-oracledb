@@ -34,6 +34,7 @@
 use crate::constants;
 use crate::error::Error;
 use crate::json::JsonValue;
+use crate::json::JsonVisitor;
 use crate::metadata::Metadata;
 use crate::ora_type::OracleIntervalDS;
 use crate::ora_type::OracleIntervalYM;
@@ -94,6 +95,15 @@ impl WireValue<'_> {
     /// Decodes JSON bytes (OSON).
     pub fn json(bytes: &[u8]) -> Result<JsonValue, Error> {
         JsonValue::from_buf_fallible(&mut ReadBuffer::from_bytes(bytes))
+    }
+
+    /// Decodes JSON bytes (OSON), passing each node to the visitor instead
+    /// of building a [`JsonValue`].
+    pub fn visit_json<V: JsonVisitor + ?Sized>(
+        bytes: &[u8],
+        visitor: &mut V,
+    ) -> Result<(), Error> {
+        crate::json::visit_oson(bytes, visitor)
     }
 
     /// Decodes VECTOR bytes.
