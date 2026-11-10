@@ -34,6 +34,8 @@
 use crate::constants;
 use crate::error::Error;
 use crate::metadata::Metadata;
+use crate::ora_type::OracleIntervalDS;
+use crate::ora_type::OracleIntervalYM;
 use crate::ora_type::OracleNumber;
 use crate::ora_type::OracleTimestamp;
 use crate::read_buffer::FromBuf;
@@ -56,6 +58,12 @@ pub enum WireValue<'a> {
     BinaryDouble(f64),
     BinaryFloat(f32),
     Boolean(bool),
+    /// INTERVAL DAY TO SECOND; see [`WireValue::interval_ds`].
+    IntervalDS(&'a [u8]),
+    /// INTERVAL YEAR TO MONTH; see [`WireValue::interval_ym`].
+    IntervalYM(&'a [u8]),
+    /// ROWID or UROWID, as its text.
+    Rowid(&'a str),
 }
 
 impl WireValue<'_> {
@@ -67,6 +75,16 @@ impl WireValue<'_> {
     /// Decodes Oracle DATE or TIMESTAMP bytes.
     pub fn timestamp(bytes: &[u8]) -> OracleTimestamp {
         OracleTimestamp::from_buf(bytes)
+    }
+
+    /// Decodes Oracle INTERVAL DAY TO SECOND bytes.
+    pub fn interval_ds(bytes: &[u8]) -> OracleIntervalDS {
+        OracleIntervalDS::from_buf(bytes)
+    }
+
+    /// Decodes Oracle INTERVAL YEAR TO MONTH bytes.
+    pub fn interval_ym(bytes: &[u8]) -> OracleIntervalYM {
+        OracleIntervalYM::from_buf(bytes)
     }
 }
 
@@ -114,5 +132,9 @@ pub fn supports(metadata: &Metadata) -> bool {
             | constants::ORA_TYPE_NUM_VARCHAR
             | constants::ORA_TYPE_NUM_RAW
             | constants::ORA_TYPE_NUM_LONG_RAW
+            | constants::ORA_TYPE_NUM_INTERVAL_DS
+            | constants::ORA_TYPE_NUM_INTERVAL_YM
+            | constants::ORA_TYPE_NUM_ROWID
+            | constants::ORA_TYPE_NUM_UROWID
     )
 }

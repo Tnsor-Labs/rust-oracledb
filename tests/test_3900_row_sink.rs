@@ -110,6 +110,13 @@ impl RowSink for Collector {
             WireValue::BinaryDouble(v) => Value::Double(v),
             WireValue::BinaryFloat(v) => Value::Float(v),
             WireValue::Boolean(v) => Value::Boolean(v),
+            WireValue::IntervalDS(bytes) => {
+                Value::Text(WireValue::interval_ds(bytes).to_string())
+            }
+            WireValue::IntervalYM(bytes) => {
+                Value::Text(WireValue::interval_ym(bytes).to_string())
+            }
+            WireValue::Rowid(text) => Value::Text(text.to_string()),
         };
         self.columns[column].push(value);
         Ok(())
@@ -157,6 +164,12 @@ fn row_value(
         row.get::<Option<f32>>(index)?.map(Value::Float)
     } else if name.contains("BOOLEAN") {
         row.get::<Option<bool>>(index)?.map(Value::Boolean)
+    } else if name.contains("INTERVAL_DS") {
+        row.get::<Option<oracledb::OracleIntervalDS>>(index)?
+            .map(|v| Value::Text(v.to_string()))
+    } else if name.contains("INTERVAL_YM") {
+        row.get::<Option<oracledb::OracleIntervalYM>>(index)?
+            .map(|v| Value::Text(v.to_string()))
     } else {
         row.get::<Option<String>>(index)?.map(Value::Text)
     };
@@ -222,6 +235,9 @@ const ALL_TYPES: &str = r#"
         cast(level / 8 as binary_double) as bd,
         cast(level / 4 as binary_float) as bf,
         mod(level, 2) = 0 as flag,
+        case when mod(level, 6) = 0 then null
+            else numtodsinterval(level * 1.5, 'SECOND') end as ids,
+        numtoyminterval(mod(level, 30) - 15, 'MONTH') as iym,
         case when mod(level, 5) = 0 then null
             else to_clob('clob ' || level) end as cl,
         to_nclob('nclob ' || level) as ncl,
@@ -297,5 +313,49 @@ fn test_3904(conn: oracledb::Connection) -> Result<(), oracledb::Error> {
     if cursor.buffered_rows() > 0 {
         assert!(cursor.fetch_into(&mut sink).is_err());
     }
+    Ok(())
+}
+
+#[rstest]
+fn test_3905(conn: oracledb::Connection) -> Result<(), oracledb::Error> {
+    // Physical ROWIDs of a heap table, logical ones (UROWID) of an
+    // index-organized table, and NULL ROWIDs.
+    let _heap = common::create_table(
+        &conn,
+        "test_3905_heap",
+        "id number, name varchar2(30)",
+    )?;
+    let _iot = common::create_table_with_options(
+        &conn,
+        "test_3905_iot",
+        "id number primary key, name varchar2(30)",
+        "organization index",
+    )?;
+    for table in ["test_3905_heap", "test_3905_iot"] {
+        conn.execute(
+            &format!(
+                "insert into {table} select level, 'name ' || level \
+                 from dual connect by level <= 500"
+            ),
+            &[],
+        )?;
+    }
+    conn.commit()?;
+    let (rows, _) = compare(
+        &conn,
+        "select rowid as rid, id, case when mod(id, 7) = 0 then null \
+         else rowid end as maybe from test_3905_heap order by id",
+        64,
+    )?;
+    assert_eq!(rows.len(), 500);
+    assert!(matches!(&rows[0][0], Value::Text(t) if t.len() == 18));
+    assert_eq!(rows[6][2], Value::Null);
+    let (rows, _) = compare(
+        &conn,
+        "select rowid as rid, id from test_3905_iot order by id",
+        64,
+    )?;
+    assert_eq!(rows.len(), 500);
+    assert!(matches!(&rows[0][0], Value::Text(t) if t.starts_with('*')));
     Ok(())
 }

@@ -232,15 +232,26 @@ impl Response {
             }
             let db_type = metadata.db_type();
             let num = db_type.ora_type_num;
-            let value = match num {
-                constants::ORA_TYPE_NUM_ROWID
-                | constants::ORA_TYPE_NUM_UROWID => {
-                    return Err(Error::not_implemented(
-                        "fetching ROWIDs into a row sink".to_string(),
-                    ));
+            // ROWIDs are not one length-prefixed value: they are decoded as
+            // for rows, and passed as their text.
+            if num == constants::ORA_TYPE_NUM_ROWID {
+                match self.read_short_length()? {
+                    0 => sink.append(i, WireValue::Null)?,
+                    _ => {
+                        let rowid = Rowid::deserialize(self)?.to_string();
+                        sink.append(i, WireValue::Rowid(&rowid))?;
+                    }
                 }
-                _ => self.read_bytes_with_length()?,
-            };
+                continue;
+            }
+            if num == constants::ORA_TYPE_NUM_UROWID {
+                match self.deserialize_urowid()? {
+                    None => sink.append(i, WireValue::Null)?,
+                    Some(rowid) => sink.append(i, WireValue::Rowid(&rowid))?,
+                }
+                continue;
+            }
+            let value = self.read_bytes_with_length()?;
             let value = if value.is_empty() {
                 WireValue::Null
             } else {
@@ -276,6 +287,12 @@ impl Response {
                     constants::ORA_TYPE_NUM_RAW
                     | constants::ORA_TYPE_NUM_LONG_RAW => {
                         WireValue::Raw(&value)
+                    }
+                    constants::ORA_TYPE_NUM_INTERVAL_DS => {
+                        WireValue::IntervalDS(&value)
+                    }
+                    constants::ORA_TYPE_NUM_INTERVAL_YM => {
+                        WireValue::IntervalYM(&value)
                     }
                     _ => {
                         return Err(Error::not_implemented(format!(
