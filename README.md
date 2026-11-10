@@ -1,3 +1,18 @@
+> **This is a fork.** It is Oracle's
+> [rust-oracledb](https://github.com/oracle/rust-oracledb) 26.0.0-beta.5 with
+> two fixes, kept until an Oracle release includes them. The Orkidea ADBC
+> driver builds with it. Files changed from the Oracle release carry a
+> "Modified by Tnsor Labs" notice:
+>
+> - `src/messages/execute.rs`: wide rows of an already-parsed statement
+>   ([#80](https://github.com/oracle/rust-oracledb/issues/80), fixed upstream).
+> - `src/config/tnsnames_file_parser.rs` and `tests/test_3400_tnsnames.rs`:
+>   an alias after a comment line in `tnsnames.ora`
+>   ([#83](https://github.com/oracle/rust-oracledb/issues/83)).
+>
+> Use the Oracle release otherwise. Report problems with these changes to
+> [Tnsor-Labs/orkidea-adbc](https://github.com/Tnsor-Labs/orkidea-adbc).
+
 # rust-oracledb
 
 [![crates.io](https://img.shields.io/crates/v/oracledb.svg)](https://crates.io/crates/oracledb)

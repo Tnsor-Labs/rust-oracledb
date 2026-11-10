@@ -26,6 +26,11 @@
 // execute.rs
 //
 // Defines the structure used for sending and receiving the execute message.
+//
+// Modified by Tnsor Labs, 2026-11-09: the bit vector of an execute response
+// is sized from the statement's columns, so wide rows of an already-parsed
+// statement are read correctly
+// (https://github.com/oracle/rust-oracledb/issues/80).
 // -----------------------------------------------------------------------------
 
 use crate::bind_params::BindParameters;
