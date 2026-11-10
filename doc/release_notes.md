@@ -15,6 +15,12 @@
     and [StatementBuilder::arrow_batch_size()](crate::StatementBuilder::arrow_batch_size)
     for processing query results incrementally with Arrow
     ([issue 52](https://github.com/oracle/rust-oracledb/issues/52)).
+1.  Added [Cursor::fetch_into()](crate::Cursor::fetch_into) and the
+    [RowSink](crate::RowSink) trait for fetching rows into a columnar
+    consumer, such as Arrow builders, without building rows: each value is
+    passed as it is decoded, borrowed from the network buffer
+    ([WireValue](crate::WireValue))
+    ([issue 85](https://github.com/oracle/rust-oracledb/issues/85)).
 1.  Added support for proxy user authentication
     ([issue 56](https://github.com/oracle/rust-oracledb/issues/56)).
 1.  Added support for authentication with the Oracle Database 11g password
