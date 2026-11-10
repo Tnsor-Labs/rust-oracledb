@@ -26,6 +26,9 @@
 // cursor.rs
 //
 // Defines the structure representing cursors.
+//
+// Modified by Tnsor Labs, 2026-11-10: buffered_rows() and fetch_into(), which
+// fetches rows into a row sink.
 //-----------------------------------------------------------------------------
 
 use std::collections::VecDeque;

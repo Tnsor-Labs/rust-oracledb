@@ -27,6 +27,8 @@
 //
 // Defines the structures used for managing the protocol between the database
 // and the client.
+//
+// Modified by Tnsor Labs, 2026-11-10: Message::restart_deserialize().
 //-----------------------------------------------------------------------------
 
 mod auth;

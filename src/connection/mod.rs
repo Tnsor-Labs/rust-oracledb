@@ -26,6 +26,8 @@
 // mod.rs
 //
 // Submodule for connections.
+//
+// Modified by Tnsor Labs, 2026-11-10: test_set_end_of_response(), for tests.
 //-----------------------------------------------------------------------------
 
 mod conn_impl;

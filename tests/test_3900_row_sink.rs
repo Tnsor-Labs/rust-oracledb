@@ -27,6 +27,8 @@
 //
 // Tests fetching rows into a row sink (Cursor::fetch_into), which must give
 // the values that fetching rows gives.
+//
+// Added by Tnsor Labs, 2026-11-10.
 // -----------------------------------------------------------------------------
 
 mod common;

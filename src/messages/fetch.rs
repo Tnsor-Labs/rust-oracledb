@@ -26,6 +26,10 @@
 // fetch.rs
 //
 // Defines the structure used for sending and receiving the fetch message.
+//
+// Modified by Tnsor Labs, 2026-11-10: a fetch can deserialize its rows into a
+// row sink, which it tells to discard what it had when the response is read
+// again.
 // -----------------------------------------------------------------------------
 
 use crate::client::Client;

@@ -27,6 +27,8 @@
 //
 // Fetching rows into a sink that receives each value as it is decoded, so
 // that columnar consumers (such as Arrow builders) avoid building a row.
+//
+// Added by Tnsor Labs, 2026-11-10.
 //-----------------------------------------------------------------------------
 
 use crate::constants;
