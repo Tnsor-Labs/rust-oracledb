@@ -33,12 +33,16 @@
 
 use crate::constants;
 use crate::error::Error;
+use crate::json::JsonValue;
 use crate::metadata::Metadata;
 use crate::ora_type::OracleIntervalDS;
 use crate::ora_type::OracleIntervalYM;
 use crate::ora_type::OracleNumber;
 use crate::ora_type::OracleTimestamp;
 use crate::read_buffer::FromBuf;
+use crate::read_buffer::FromBufFallible;
+use crate::read_buffer::ReadBuffer;
+use crate::vector::Vector;
 
 /// A column value as it arrives from the database, borrowed from the network
 /// buffer.
@@ -65,6 +69,10 @@ pub enum WireValue<'a> {
     IntervalYM(&'a [u8]),
     /// ROWID or UROWID, as its text.
     Rowid(&'a str),
+    /// JSON, in Oracle's binary format (OSON); see [`WireValue::json`].
+    Json(&'a [u8]),
+    /// VECTOR, in Oracle's binary format; see [`WireValue::vector`].
+    Vector(&'a [u8]),
 }
 
 impl WireValue<'_> {
@@ -81,6 +89,16 @@ impl WireValue<'_> {
     /// Decodes Oracle INTERVAL DAY TO SECOND bytes.
     pub fn interval_ds(bytes: &[u8]) -> OracleIntervalDS {
         OracleIntervalDS::from_buf(bytes)
+    }
+
+    /// Decodes JSON bytes (OSON).
+    pub fn json(bytes: &[u8]) -> Result<JsonValue, Error> {
+        JsonValue::from_buf_fallible(&mut ReadBuffer::from_bytes(bytes))
+    }
+
+    /// Decodes VECTOR bytes.
+    pub fn vector(bytes: &[u8]) -> Result<Vector, Error> {
+        Vector::from_buf_fallible(&mut ReadBuffer::from_bytes(bytes))
     }
 
     /// Decodes Oracle INTERVAL YEAR TO MONTH bytes.
@@ -137,5 +155,7 @@ pub fn supports(metadata: &Metadata) -> bool {
             | constants::ORA_TYPE_NUM_INTERVAL_YM
             | constants::ORA_TYPE_NUM_ROWID
             | constants::ORA_TYPE_NUM_UROWID
+            | constants::ORA_TYPE_NUM_JSON
+            | constants::ORA_TYPE_NUM_VECTOR
     )
 }

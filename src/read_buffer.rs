@@ -290,6 +290,22 @@ impl ReadBuffer {
         }
     }
 
+    /// Reads a value-based LOB (JSON or VECTOR) as its encoded bytes, without
+    /// decoding them; None for NULL.
+    pub(crate) fn read_value_lob_bytes(
+        &mut self,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        let num_bytes = self.read_ub4()?;
+        if num_bytes == 0 {
+            return Ok(None);
+        }
+        let _size = self.read_ub8()?;
+        let _chunk_size = self.read_ub4()?;
+        let data = self.read_bytes_with_length()?.into_owned();
+        let _locator = self.read_bytes_with_length()?;
+        Ok(if data.is_empty() { None } else { Some(data) })
+    }
+
     /// Called when a value is being read from a value-based LOB. The value is
     /// assumed to contain a complex set of encoded bytes which will need to be
     /// decoded in a fallible fashion.
