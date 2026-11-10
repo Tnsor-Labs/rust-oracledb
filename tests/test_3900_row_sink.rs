@@ -117,6 +117,12 @@ impl RowSink for Collector {
                 Value::Text(WireValue::interval_ym(bytes).to_string())
             }
             WireValue::Rowid(text) => Value::Text(text.to_string()),
+            WireValue::Json(bytes) => {
+                Value::Text(canonical_json(&WireValue::json(bytes)?))
+            }
+            WireValue::Vector(bytes) => {
+                Value::Text(format!("{:?}", WireValue::vector(bytes)?))
+            }
         };
         self.columns[column].push(value);
         Ok(())
@@ -143,6 +149,29 @@ impl RowSink for Collector {
     }
 }
 
+/// JSON as text with object keys sorted, so that two values compare equal
+/// whatever order their objects' keys come in.
+fn canonical_json(value: &oracledb::JsonValue) -> String {
+    use oracledb::JsonValue;
+    match value {
+        JsonValue::JsonObject(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            let fields: Vec<String> = keys
+                .into_iter()
+                .map(|k| format!("{k:?}:{}", canonical_json(&map[k])))
+                .collect();
+            format!("{{{}}}", fields.join(","))
+        }
+        JsonValue::JsonArray(items) => {
+            let items: Vec<String> =
+                items.iter().map(canonical_json).collect();
+            format!("[{}]", items.join(","))
+        }
+        other => format!("{other:?}"),
+    }
+}
+
 /// A value of a row read the usual way, by the column's type.
 fn row_value(
     row: &oracledb::Row,
@@ -164,6 +193,12 @@ fn row_value(
         row.get::<Option<f32>>(index)?.map(Value::Float)
     } else if name.contains("BOOLEAN") {
         row.get::<Option<bool>>(index)?.map(Value::Boolean)
+    } else if name.contains("JSON") {
+        row.get::<Option<oracledb::JsonValue>>(index)?
+            .map(|v| Value::Text(canonical_json(&v)))
+    } else if name.contains("VECTOR") {
+        row.get::<Option<oracledb::Vector>>(index)?
+            .map(|v| Value::Text(format!("{v:?}")))
     } else if name.contains("INTERVAL_DS") {
         row.get::<Option<oracledb::OracleIntervalDS>>(index)?
             .map(|v| Value::Text(v.to_string()))
@@ -357,5 +392,31 @@ fn test_3905(conn: oracledb::Connection) -> Result<(), oracledb::Error> {
     )?;
     assert_eq!(rows.len(), 500);
     assert!(matches!(&rows[0][0], Value::Text(t) if t.starts_with('*')));
+    Ok(())
+}
+
+#[rstest]
+fn test_3906(conn: oracledb::Connection) -> Result<(), oracledb::Error> {
+    // JSON and VECTOR values, which arrive as value-based LOBs, with NULLs.
+    if common::skip_unless_native_json_supported(&conn)
+        || common::skip_unless_vectors_supported(&conn)
+    {
+        return Ok(());
+    }
+    let (rows, _) = compare(
+        &conn,
+        "select level as id, \
+         case when mod(level, 5) = 0 then null else \
+             json('{\"n\":' || level || ',\"tags\":[\"a\",\"b\"],\"x\":1.5}') end as doc, \
+         case when mod(level, 7) = 0 then null else \
+             to_vector('[' || level || ',2.5,-1]', 3, float32) end as vec, \
+         to_vector('[' || level || ',1]', 2, float64) as vec64 \
+         from dual connect by level <= 700 order by id",
+        64,
+    )?;
+    assert_eq!(rows.len(), 700);
+    assert_eq!(rows[4][1], Value::Null);
+    assert_eq!(rows[6][2], Value::Null);
+    assert!(matches!(&rows[0][1], Value::Text(t) if t.contains("tags")));
     Ok(())
 }

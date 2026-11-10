@@ -244,6 +244,20 @@ impl Response {
                 }
                 continue;
             }
+            // JSON and VECTOR values are value-based LOBs: their encoded
+            // bytes, which the sink decodes if it needs to.
+            if num == constants::ORA_TYPE_NUM_JSON
+                || num == constants::ORA_TYPE_NUM_VECTOR
+            {
+                match self.read_value_lob_bytes()? {
+                    None => sink.append(i, WireValue::Null)?,
+                    Some(data) if num == constants::ORA_TYPE_NUM_JSON => {
+                        sink.append(i, WireValue::Json(&data))?
+                    }
+                    Some(data) => sink.append(i, WireValue::Vector(&data))?,
+                }
+                continue;
+            }
             if num == constants::ORA_TYPE_NUM_UROWID {
                 match self.deserialize_urowid()? {
                     None => sink.append(i, WireValue::Null)?,
@@ -656,6 +670,12 @@ impl Response {
     /// Called when a value is being read from a value-based LOB. The value is
     /// assumed to contain a complex set of encoded bytes which will need to be
     /// decoded in a fallible fashion.
+    pub(crate) fn read_value_lob_bytes(
+        &mut self,
+    ) -> Result<Option<Vec<u8>>, Error> {
+        self.buf.read_value_lob_bytes()
+    }
+
     pub(crate) fn read_value_lob<T>(&mut self) -> Result<Option<T>, Error>
     where
         T: FromBufFallible,
