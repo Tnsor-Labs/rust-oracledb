@@ -27,6 +27,10 @@
 //
 // Defines the structures used for handling the requests to and the responses
 // from the server.
+//
+// Modified by Tnsor Labs, 2026-11-10: fetch_into() fetches rows into a row
+// sink, and a response read again from its start lets the message discard what
+// it had deserialized (restart_deserialize).
 //-----------------------------------------------------------------------------
 
 mod capabilities;
@@ -66,6 +70,7 @@ use crate::packet::Packet;
 use crate::response::Response;
 use crate::row::DbRow;
 use crate::row::Row;
+use crate::row_sink::RowSink;
 use crate::statement::CachedStatement;
 use crate::statement::StatementCache;
 use crate::statement::StatementOptions;
@@ -214,6 +219,7 @@ impl Client {
         message.pre_deserialize(self, response);
         while let Err(e) = message.deserialize(self, response) {
             if e.is_out_of_data() {
+                message.restart_deserialize(response)?;
                 response.add_packets(self.receive_packets()?);
                 continue;
             }
@@ -810,6 +816,16 @@ impl Client {
         Ok(response)
     }
 
+    /// Fetches the next rows of the statement into `sink`.
+    pub(crate) fn fetch_into(
+        &mut self,
+        statement: &mut CachedStatement,
+        sink: &mut dyn RowSink,
+    ) -> Result<Response, Error> {
+        let mut message = FetchMessage::with_sink(statement, sink);
+        self.process_message(&mut message)
+    }
+
     /// Fetches all rows from the database given the initial response returned
     /// for the execute (or an empty response if using a REF cursor).
     pub(crate) fn fetch_all_rows(
@@ -1067,6 +1083,11 @@ impl Client {
     }
 
     /// Returns whether the database supports the "end of response" flag.
+    /// See `Connection::test_set_end_of_response`.
+    pub(crate) fn test_set_end_of_response(&mut self, value: bool) -> bool {
+        self.caps.set_supports_end_of_response(value)
+    }
+
     pub(crate) fn supports_end_of_response(&self) -> bool {
         self.caps.supports_end_of_response()
     }

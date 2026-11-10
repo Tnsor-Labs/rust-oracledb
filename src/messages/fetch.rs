@@ -26,6 +26,10 @@
 // fetch.rs
 //
 // Defines the structure used for sending and receiving the fetch message.
+//
+// Modified by Tnsor Labs, 2026-11-10: a fetch can deserialize its rows into a
+// row sink, which it tells to discard what it had when the response is read
+// again.
 // -----------------------------------------------------------------------------
 
 use crate::client::Client;
@@ -34,31 +38,44 @@ use crate::error::Error;
 use crate::messages::Message;
 use crate::response::Response;
 use crate::row::DbRow;
+use crate::row_sink::RowSink;
 use crate::statement::CachedStatement;
 use crate::write_buffer::WriteBuffer;
 
-pub struct FetchMessage<'statement> {
+pub struct FetchMessage<'statement, 'sink> {
     statement: &'statement mut CachedStatement,
     last_row: Option<DbRow>,
+    sink: Option<&'sink mut dyn RowSink>,
 }
 
-impl FetchMessage<'_> {
+impl FetchMessage<'_, '_> {
     pub fn new<'statement>(
         statement: &'statement mut CachedStatement,
         last_row: Option<DbRow>,
-    ) -> FetchMessage<'statement> {
-        FetchMessage { statement, last_row }
+    ) -> FetchMessage<'statement, 'static> {
+        FetchMessage { statement, last_row, sink: None }
+    }
+
+    /// A fetch whose rows go into `sink` (see [`RowSink`]).
+    pub fn with_sink<'statement, 'sink>(
+        statement: &'statement mut CachedStatement,
+        sink: &'sink mut dyn RowSink,
+    ) -> FetchMessage<'statement, 'sink> {
+        FetchMessage { statement, last_row: None, sink: Some(sink) }
     }
 }
 
-impl Message for FetchMessage<'_> {
+impl Message for FetchMessage<'_, '_> {
     /// Deserializes a TTC row data message.
     fn deserialize_row_data(
         &mut self,
         client: &Client,
         resp: &mut Response,
     ) -> Result<(), Error> {
-        resp.deserialize_row_data(client, self.statement, true)
+        match self.sink.as_deref_mut() {
+            Some(sink) => resp.deserialize_row_into(self.statement, sink),
+            None => resp.deserialize_row_data(client, self.statement, true),
+        }
     }
 
     fn post_deserialize(
@@ -67,6 +84,13 @@ impl Message for FetchMessage<'_> {
         resp: &mut Response,
     ) -> Result<(), Error> {
         resp.check_for_statement_error(client, self.statement)
+    }
+
+    fn restart_deserialize(&mut self, resp: &Response) -> Result<(), Error> {
+        match self.sink.as_deref_mut() {
+            Some(sink) => sink.discard(resp.sink_rows()),
+            None => Ok(()),
+        }
     }
 
     fn pre_deserialize(&mut self, _client: &mut Client, resp: &mut Response) {

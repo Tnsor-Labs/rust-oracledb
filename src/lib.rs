@@ -26,6 +26,9 @@
 // lib.rs
 //
 // Main library of oracledb crate.
+//
+// Modified by Tnsor Labs, 2026-11-10: exports RowSink, WireValue, and
+// row_sink_supports.
 //-----------------------------------------------------------------------------
 
 #![crate_type = "lib"]
@@ -60,6 +63,7 @@ mod pool;
 mod read_buffer;
 mod response;
 mod row;
+mod row_sink;
 mod rowid;
 mod secret_value;
 mod statement;
@@ -89,6 +93,9 @@ pub use crate::ora_version::OracleVersion;
 pub use crate::pool::Pool;
 pub use crate::response::DbError;
 pub use crate::row::Row;
+pub use crate::row_sink::RowSink;
+pub use crate::row_sink::WireValue;
+pub use crate::row_sink::supports as row_sink_supports;
 pub use crate::statement::Statement;
 pub use crate::statement::StatementBuilder;
 pub use crate::vector::SparseVector;

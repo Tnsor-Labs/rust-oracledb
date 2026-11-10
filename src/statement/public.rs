@@ -27,6 +27,8 @@
 //
 // Defines the structure representing a statement and various options used
 // publicly.
+//
+// Modified by Tnsor Labs, 2026-11-10: fetch_into(), for Cursor::fetch_into().
 //-----------------------------------------------------------------------------
 
 use super::CachedStatement;
@@ -44,6 +46,7 @@ use crate::metadata::Metadata;
 use crate::response::Response;
 use crate::row::DbRow;
 use crate::row::Row;
+use crate::row_sink::RowSink;
 
 /// Represents SQL statements that can be executed with various options.
 pub struct Statement {
@@ -63,6 +66,14 @@ impl Statement {
             &self.client_ref,
             last_row,
         )
+    }
+
+    /// Fetches the next rows into `sink`.
+    pub(crate) fn fetch_into(
+        &mut self,
+        sink: &mut dyn RowSink,
+    ) -> Result<Response, Error> {
+        self.client_ref.lock()?.fetch_into(&mut self.statement, sink)
     }
 
     /// Gets the response to the execution of a statement. At this point binds

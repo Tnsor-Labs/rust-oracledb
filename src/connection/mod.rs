@@ -26,6 +26,8 @@
 // mod.rs
 //
 // Submodule for connections.
+//
+// Modified by Tnsor Labs, 2026-11-10: test_set_end_of_response(), for tests.
 //-----------------------------------------------------------------------------
 
 mod conn_impl;
@@ -203,6 +205,18 @@ impl Connection {
     /// Pings the database.
     pub fn ping(&self) -> Result<(), Error> {
         self.get_impl()?.ping()
+    }
+
+    /// For tests: whether the client relies on the end of response flag to
+    /// know a response has arrived whole. Without it, each response is read
+    /// as its packets arrive, again from its start for each one, as with
+    /// databases before 23ai. Returns the previous setting.
+    #[doc(hidden)]
+    pub fn test_set_end_of_response(
+        &self,
+        value: bool,
+    ) -> Result<bool, Error> {
+        self.get_impl()?.test_set_end_of_response(value)
     }
 
     /// Executes a query against the database.

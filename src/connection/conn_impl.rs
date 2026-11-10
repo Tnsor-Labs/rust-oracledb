@@ -28,6 +28,8 @@
 // Defines the structure that implements connections. This is independent of
 // the connection structure in order to allow for connections that are closed
 // and for pooling connections.
+//
+// Modified by Tnsor Labs, 2026-11-10: test_set_end_of_response(), for tests.
 //-----------------------------------------------------------------------------
 
 use std::sync::Arc;
@@ -83,6 +85,14 @@ impl ConnImpl {
     /// connection is dropped.
     pub(crate) fn close(&mut self) -> Result<(), Error> {
         self.client_ref.lock()?.close()
+    }
+
+    /// See `Connection::test_set_end_of_response`.
+    pub(crate) fn test_set_end_of_response(
+        &self,
+        value: bool,
+    ) -> Result<bool, Error> {
+        Ok(self.client_ref.lock()?.test_set_end_of_response(value))
     }
 
     /// Establishes a connection to the database and returns it.

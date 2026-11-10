@@ -1,14 +1,21 @@
 > **This is a fork.** It is Oracle's
 > [rust-oracledb](https://github.com/oracle/rust-oracledb) 26.0.0-beta.5 with
-> two fixes, kept until an Oracle release includes them. The Orkidea ADBC
-> driver builds with it. Files changed from the Oracle release carry a
-> "Modified by Tnsor Labs" notice:
+> two fixes and one addition, kept until an Oracle release includes them. The
+> Orkidea ADBC driver builds with it. Files changed from the Oracle release
+> carry a "Modified by Tnsor Labs" notice:
 >
 > - `src/messages/execute.rs`: wide rows of an already-parsed statement
 >   ([#80](https://github.com/oracle/rust-oracledb/issues/80), fixed upstream).
 > - `src/config/tnsnames_file_parser.rs` and `tests/test_3400_tnsnames.rs`:
 >   an alias after a comment line in `tnsnames.ora`
 >   ([#83](https://github.com/oracle/rust-oracledb/issues/83)).
+> - Row sinks: `Cursor::fetch_into` fetches rows into a `RowSink`, which
+>   receives each value as it is decoded from the network buffer, without
+>   building rows, for columnar consumers such as Arrow. New in
+>   `src/row_sink.rs` and `tests/test_3900_row_sink.rs`; the fetch path in
+>   `src/cursor.rs`, `src/client/mod.rs`, `src/messages/fetch.rs`,
+>   `src/messages/mod.rs`, `src/response/mod.rs`, `src/statement/public.rs`,
+>   and `src/lib.rs`; and a test-only setting in `src/connection/`.
 >
 > Use the Oracle release otherwise. Report problems with these changes to
 > [Tnsor-Labs/orkidea-adbc](https://github.com/Tnsor-Labs/orkidea-adbc).

@@ -27,6 +27,8 @@
 //
 // Defines the structures used for managing the protocol between the database
 // and the client.
+//
+// Modified by Tnsor Labs, 2026-11-10: Message::restart_deserialize().
 //-----------------------------------------------------------------------------
 
 mod auth;
@@ -238,6 +240,12 @@ pub(crate) trait Message {
 
     /// Called just before the data sent by the database is deserialized.
     fn pre_deserialize(&mut self, _client: &mut Client, _resp: &mut Response) {
+    }
+
+    /// Called when the response must be deserialized again from its start,
+    /// because more of it has arrived.
+    fn restart_deserialize(&mut self, _resp: &Response) -> Result<(), Error> {
+        Ok(())
     }
 
     /// Returns whether or not a message needs to be sent a second time.

@@ -26,6 +26,9 @@
 // cursor.rs
 //
 // Defines the structure representing cursors.
+//
+// Modified by Tnsor Labs, 2026-11-10: buffered_rows() and fetch_into(), which
+// fetches rows into a row sink.
 //-----------------------------------------------------------------------------
 
 use std::collections::VecDeque;
@@ -35,6 +38,7 @@ use crate::error::Error;
 use crate::metadata::Metadata;
 use crate::response::Response;
 use crate::row::{DbRow, Row};
+use crate::row_sink::RowSink;
 use crate::statement::{CachedStatement, Statement};
 
 /// Represents a set of rows retrieved from the database by calling
@@ -91,6 +95,38 @@ impl Cursor {
         self.rows.clear();
         self.last_row = None;
         self.set_from_response(response);
+    }
+
+    /// Returns how many fetched rows the cursor holds, which [`Iterator::next`]
+    /// returns before it fetches more.
+    pub fn buffered_rows(&self) -> usize {
+        self.rows.len()
+    }
+
+    /// Fetches the next rows (as many as the fetch array size) into `sink`,
+    /// decoding each value straight from the network buffer instead of
+    /// building rows. Returns how many rows were fetched; 0 when the query
+    /// has no more.
+    ///
+    /// Rows the cursor holds must be read first with [`Iterator::next`], and
+    /// every column must be one [`crate::row_sink_supports`] accepts. After
+    /// this, rows can only be fetched with `fetch_into`.
+    pub fn fetch_into(
+        &mut self,
+        sink: &mut dyn RowSink,
+    ) -> Result<usize, Error> {
+        if !self.rows.is_empty() {
+            return Err(Error::not_implemented(
+                "fetching into a row sink while rows are buffered".to_string(),
+            ));
+        }
+        if self.end_of_fetch {
+            return Ok(0);
+        }
+        self.last_row = None;
+        let response = self.statement.fetch_into(sink)?;
+        self.end_of_fetch = response.is_end_of_fetch();
+        Ok(response.sink_rows())
     }
 
     /// Returns the columns associated with the cursor. If the cursor does not
