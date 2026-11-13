@@ -218,9 +218,12 @@ impl Response {
     /// accepts may be fetched this way.
     pub(crate) fn deserialize_row_into(
         &mut self,
+        client: &Client,
         statement: &CachedStatement,
         sink: &mut dyn RowSink,
     ) -> Result<(), Error> {
+        // A TIMESTAMP WITH LOCAL TIME ZONE value converted to UTC.
+        let mut utc = [0u8; constants::ORA_TYPE_SIZE_TIMESTAMP];
         for (i, metadata) in statement.out_metadata().iter().enumerate() {
             if metadata.is_null_by_describe() {
                 sink.append(i, WireValue::Null)?;
@@ -279,9 +282,18 @@ impl Response {
                     constants::ORA_TYPE_NUM_BOOLEAN => {
                         WireValue::Boolean(bool::from_buf(&value))
                     }
+                    // Sent in the database time zone; rows are given it in
+                    // UTC, and so is the sink.
+                    constants::ORA_TYPE_NUM_TIMESTAMP_LTZ => {
+                        let len = crate::row_sink::timestamp_ltz_to_utc(
+                            &value,
+                            client.db_timezone_offset()?,
+                            &mut utc,
+                        )?;
+                        WireValue::Timestamp(&utc[..len])
+                    }
                     constants::ORA_TYPE_NUM_DATE
                     | constants::ORA_TYPE_NUM_TIMESTAMP
-                    | constants::ORA_TYPE_NUM_TIMESTAMP_LTZ
                     | constants::ORA_TYPE_NUM_TIMESTAMP_TZ => {
                         WireValue::Timestamp(&value)
                     }

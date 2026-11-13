@@ -54,14 +54,24 @@ enum Value {
 #[derive(Default)]
 struct Collector {
     columns: Vec<Vec<Value>>,
+    /// The TIMESTAMP WITH LOCAL TIME ZONE columns, whose values the sink
+    /// gives in UTC, as rows do.
+    local_time_zone: Vec<bool>,
     rows: usize,
     /// Rows the sink was told to discard, in total.
     discarded: usize,
 }
 
 impl Collector {
-    fn new(columns: usize) -> Self {
-        Self { columns: vec![Vec::new(); columns], ..Self::default() }
+    fn new(types: &[&oracledb::DbType]) -> Self {
+        Self {
+            columns: vec![Vec::new(); types.len()],
+            local_time_zone: types
+                .iter()
+                .map(|t| *t == oracledb::DB_TYPE_TIMESTAMP_LTZ)
+                .collect(),
+            ..Self::default()
+        }
     }
 
     fn push_row(&mut self, row: Vec<Value>) {
@@ -105,7 +115,12 @@ impl RowSink for Collector {
             }
             WireValue::Raw(bytes) => Value::Raw(bytes.to_vec()),
             WireValue::Timestamp(bytes) => {
-                Value::Text(WireValue::timestamp(bytes).to_string())
+                let text = WireValue::timestamp(bytes).to_string();
+                if self.local_time_zone[column] {
+                    Value::Text(text + "Z")
+                } else {
+                    Value::Text(text)
+                }
             }
             WireValue::BinaryDouble(v) => Value::Double(v),
             WireValue::BinaryFloat(v) => Value::Float(v),
@@ -239,7 +254,7 @@ fn compare(
         .build()?
         .query(&[])?;
     assert!(cursor.columns().iter().all(oracledb::row_sink_supports));
-    let mut sink = Collector::new(types.len());
+    let mut sink = Collector::new(&types);
     // The rows that came with the execute, then the sink.
     while cursor.buffered_rows() > 0 {
         let row = cursor.next().unwrap()?;
@@ -276,7 +291,12 @@ const ALL_TYPES: &str = r#"
         case when mod(level, 5) = 0 then null
             else to_clob('clob ' || level) end as cl,
         to_nclob('nclob ' || level) as ncl,
-        to_blob(hextoraw('FF' || to_char(mod(level, 256), 'FM0X'))) as bl
+        to_blob(hextoraw('FF' || to_char(mod(level, 256), 'FM0X'))) as bl,
+        from_tz(timestamp '2025-01-01 10:00:00.25'
+            + numtodsinterval(level, 'MINUTE'), '+02:00') as tstz,
+        cast(timestamp '2025-01-01 23:30:00.5'
+            + numtodsinterval(level, 'MINUTE')
+            as timestamp with local time zone) as tsltz
     from dual connect by level <= 1000
     order by id
 "#;
@@ -344,7 +364,7 @@ fn test_3904(conn: oracledb::Connection) -> Result<(), oracledb::Error> {
         .prefetch_rows(5)
         .build()?
         .query(&[])?;
-    let mut sink = Collector::new(1);
+    let mut sink = Collector::new(&[oracledb::DB_TYPE_NUMBER]);
     if cursor.buffered_rows() > 0 {
         assert!(cursor.fetch_into(&mut sink).is_err());
     }

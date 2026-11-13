@@ -59,7 +59,8 @@ pub enum WireValue<'a> {
     /// RAW or LONG RAW bytes.
     Raw(&'a [u8]),
     /// DATE or TIMESTAMP (WITH TIME ZONE, WITH LOCAL TIME ZONE); see
-    /// [`WireValue::timestamp`].
+    /// [`WireValue::timestamp`]. TIMESTAMP WITH TIME ZONE and WITH LOCAL TIME
+    /// ZONE values are in UTC, as in rows.
     Timestamp(&'a [u8]),
     BinaryDouble(f64),
     BinaryFloat(f32),
@@ -115,6 +116,34 @@ impl WireValue<'_> {
     pub fn interval_ym(bytes: &[u8]) -> OracleIntervalYM {
         OracleIntervalYM::from_buf(bytes)
     }
+}
+
+/// Converts a TIMESTAMP WITH LOCAL TIME ZONE value, which the database sends
+/// in its own time zone, to UTC, as rows are given it, into `out`. Returns the
+/// length of the value in `out`.
+pub(crate) fn timestamp_ltz_to_utc(
+    bytes: &[u8],
+    db_timezone_offset: chrono::Duration,
+    out: &mut [u8; constants::ORA_TYPE_SIZE_TIMESTAMP],
+) -> Result<usize, Error> {
+    let len = bytes.len().min(out.len());
+    out[..len].copy_from_slice(&bytes[..len]);
+    if !db_timezone_offset.is_zero() {
+        let mut value = OracleTimestamp::from_buf(bytes);
+        value.adjust_timestamp_ltz_to_utc(db_timezone_offset)?;
+        let byte = |v: i16| -> Result<u8, Error> {
+            u8::try_from(v).map_err(|_| {
+                Error::out_of_range(format!("year {}", value.year()))
+            })
+        };
+        out[0] = byte(value.year() / 100 + 100)?;
+        out[1] = byte(value.year() % 100 + 100)?;
+        out[2] = value.month();
+        out[3] = value.day();
+        out[4] = value.hour() + 1;
+        out[5] = value.minute() + 1;
+    }
+    Ok(len)
 }
 
 /// Receives the values of fetched rows, column by column, row by row.

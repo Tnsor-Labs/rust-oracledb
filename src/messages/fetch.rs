@@ -73,7 +73,9 @@ impl Message for FetchMessage<'_, '_> {
         resp: &mut Response,
     ) -> Result<(), Error> {
         match self.sink.as_deref_mut() {
-            Some(sink) => resp.deserialize_row_into(self.statement, sink),
+            Some(sink) => {
+                resp.deserialize_row_into(client, self.statement, sink)
+            }
             None => resp.deserialize_row_data(client, self.statement, true),
         }
     }
