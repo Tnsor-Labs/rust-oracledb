@@ -23,9 +23,6 @@
 
 //-----------------------------------------------------------------------------
 // test_3400_tnsnames()
-//
-// Modified by Tnsor Labs, 2026-11-10: adds a test of an alias written after a
-// comment line (https://github.com/oracle/rust-oracledb/issues/83).
 //-----------------------------------------------------------------------------
 
 use std::fs;

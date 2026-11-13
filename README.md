@@ -1,13 +1,9 @@
 > **This is a fork.** It is Oracle's
-> [rust-oracledb](https://github.com/oracle/rust-oracledb) `main` as of
-> 3dd6de4 (26.0.0-beta.6, not yet released) with one fix and one addition,
-> kept until an Oracle release includes them. The Orkidea ADBC driver builds
-> with it. Files changed from Oracle's code carry a "Modified by Tnsor Labs"
-> notice:
+> [rust-oracledb](https://github.com/oracle/rust-oracledb) 26.0.0-beta.6
+> with two additions, kept until an Oracle release includes them. The Orkidea
+> ADBC driver builds with it. Files changed from Oracle's code carry a
+> "Modified by Tnsor Labs" notice:
 >
-> - `src/config/tnsnames_file_parser.rs` and `tests/test_3400_tnsnames.rs`:
->   an alias after a comment line in `tnsnames.ora`
->   ([#83](https://github.com/oracle/rust-oracledb/issues/83)).
 > - Row sinks ([#85](https://github.com/oracle/rust-oracledb/issues/85)):
 >   `Cursor::fetch_into` fetches rows into a `RowSink`, which receives each
 >   value as it is decoded from the network buffer, without building rows.
